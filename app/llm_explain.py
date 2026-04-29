@@ -14,9 +14,11 @@ def get_fraud_explanation(
     transaction_data: dict
 ) -> str:
     
-    api_key = os.getenv("GROQ_API_KEY")
+    # First try Streamlit Secrets (for production), then fallback to .env (for local)
+    api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+    
     if not api_key or api_key == "your_key_here":
-        return "Groq API Key not set. Please update the .env file to get AI explanations."
+        return "Groq API Key not set. Please add GROQ_API_KEY to Streamlit Secrets in your dashboard."
         
     client = groq.Groq(api_key=api_key)
     
