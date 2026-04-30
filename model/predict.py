@@ -48,9 +48,11 @@ def predict_fraud(transaction_data: dict) -> dict:
     class_names = {0: "Legit", 1: "Phishing", 2: "Scam", 3: "Hack"}
     verdict = class_names.get(prediction, "Unknown")
     
-    # Feature importance
+    # Feature impact (Local Contribution)
+    # Multiplying scaled values by importance gives a proxy for which feature drove THIS specific score
     importances = model.feature_importances_
-    top_features = sorted(zip(features, importances), key=lambda x: x[1], reverse=True)[:5]
+    local_impact = X_scaled[0] * importances
+    top_features = sorted(zip(features, local_impact), key=lambda x: abs(x[1]), reverse=True)[:5]
     
     return {
         "risk_score": fraud_prob,

@@ -97,8 +97,8 @@ with st.sidebar:
     st.spacer = st.container()
     st.markdown("<br><br><br><br>", unsafe_allow_html=True)
     with st.expander("⚙️ System Status"):
-        st.write("🟢 Model: XGBoost v4.2")
-        st.write("🟢 AI Engine: Llama-3.1")
+        st.markdown("🟢 Model: [XGBoost v4.2](https://medium.com/low-code-for-advanced-data-science/xgboost-explained-a-beginners-guide-095464ad418f)")
+        st.markdown("🟢 AI Engine: [Llama-3.1](https://ollama.com/library/llama3.1)")
         st.write("🟢 API: Connected")
 
 # Load Model
@@ -342,14 +342,15 @@ elif st.session_state.page == "Methodology":
 
 # --- ABOUT PAGE ---
 elif st.session_state.page == "About":
-    st.title("About CryptoGuard")
-    st.write("Leading the way in blockchain forensic security.")
+    st.title("Our Mission")
+    st.write("Democratizing Blockchain Security through Research & AI.")
     
     st.markdown("""<div class='risk-card'>
-        <p>CryptoGuard was founded to bring transparency and security to the decentralized world. Our team consists of former cybersecurity experts and blockchain developers who saw a gap in institutional compliance tools.</p>
-        <p>Today, we protect millions in assets by providing real-time, explainable fraud detection.</p>
-        <button style='background:transparent; border:1px solid #00F2FF; color:#00F2FF; padding:10px 20px; border-radius:10px; cursor:pointer'>Contact Enterprise Support</p>
+        <h3>Why This Project Was Built</h3>
+        <p>CryptoGuard was developed as a research initiative to tackle the growing complexity and lack of transparency in decentralized finance. For many users, blockchain activity is a 'black box' where fraud and scams are difficult to detect without deep technical knowledge.</p>
+        <h3>Contributing to a Safer Society</h3>
+        <p>This project aims to bridge the gap between complex data and human understanding. By combining Machine Learning with Explainable AI, we provide a tool that not only identifies risks but also explains them in plain English. Our goal is to empower everyday investors, students, and researchers with the knowledge to navigate the crypto world safely, contributing to a more secure and informed digital community.</p>
     </div>""", unsafe_allow_html=True)
 
 # FOOTER
-st.markdown("<br><br><br><p style='text-align:center; opacity:0.3'>© 2026 CryptoGuard Enterprise. All Rights Reserved.</p>", unsafe_allow_html=True)
+st.markdown("<br><br><br><p style='text-align:center; opacity:0.3'>© 2026 CryptoGuard | Open Research Project | Empowering Digital Safety</p>", unsafe_allow_html=True)
