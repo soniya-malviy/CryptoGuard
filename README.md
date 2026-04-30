@@ -4,7 +4,7 @@ CryptoGuard is a sophisticated blockchain forensic platform designed to detect a
 
 ---
 
-## 🚀 Core Features
+## Core Features
 - **Multi-Class Detection**: Identifies 4 distinct wallet profiles: `Legit`, `Phishing`, `Scam`, and `Hack`.
 - **Explainable AI (XAI)**: Generates human-readable forensic reports using Llama-3.1 to explain the "Why" behind every score.
 - **Dynamic Risk Vectors**: Visualizes the specific behavioral triggers for every audit (Local Feature Impact).
@@ -13,7 +13,7 @@ CryptoGuard is a sophisticated blockchain forensic platform designed to detect a
 
 ---
 
-## 🛠️ Technical Stack
+## Technical Stack
 - **Brain**: XGBoost (Extreme Gradient Boosting)
 - **AI Analyst**: Llama-3.1 (via Groq Cloud API)
 - **Frontend**: Streamlit (Python-based Web Framework)
@@ -50,22 +50,22 @@ streamlit run app/main.py
 
 ---
 
-## 📊 Model Performance
+##  Model Performance
 Our XGBoost model is trained on **5,002 cryptographic behavioral signatures**, achieving:
-- **Precision**: 100%
-- **Recall**: 100%
+- **Precision**: 89%
+- **F1-score**: 0.86
 - **Dataset**: Proprietary Ethereum Forensic Dataset
 
 ---
 
-## 🔒 Security & Deployment
+##  Security & Deployment
 - **Local Development**: Uses `.env` for secret management (ignored by Git).
 - **Production**: Supports **Streamlit Secrets** for safe deployment on the cloud.
 - **XSRF Protection**: Configured via `.streamlit/config.toml` to handle large file uploads securely.
 
 ---
 
-## 🎓 About the Project
+##  About the Project
 CryptoGuard was developed as an **Open Research Project** to democratize blockchain security. Our goal is to make decentralized finance safer by providing clear, explainable, and accessible forensic tools for everyone—from students to institutional analysts.
 
 © 2026 CryptoGuard | Empowering Digital Safety
