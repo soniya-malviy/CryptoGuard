@@ -100,7 +100,29 @@ with st.sidebar:
     with st.expander("⚙️ System Status"):
         st.markdown("🟢 Model: [XGBoost v4.2](https://medium.com/low-code-for-advanced-data-science/xgboost-explained-a-beginners-guide-095464ad418f)")
         st.markdown("🟢 AI Engine: [Llama-3.1](https://ollama.com/library/llama3.1)")
-        st.write("🟢 API: Connected")
+        
+        # Check Groq Key
+        groq_set = False
+        try:
+            groq_set = bool(st.secrets.get("GROQ_API_KEY")) or bool(os.getenv("GROQ_API_KEY"))
+        except:
+            groq_set = bool(os.getenv("GROQ_API_KEY"))
+        
+        # Check Etherscan Key
+        eth_set = False
+        try:
+            eth_set = bool(st.secrets.get("ETHERSCAN_API_KEY")) or bool(os.getenv("ETHERSCAN_API_KEY"))
+        except:
+            eth_set = bool(os.getenv("ETHERSCAN_API_KEY"))
+
+        if groq_set and eth_set:
+            st.write("🟢 API: Connected")
+        else:
+            if not groq_set:
+                st.error("❌ GROQ_API_KEY Missing")
+            if not eth_set:
+                st.error("❌ ETHERSCAN_API_KEY Missing")
+            st.warning("Check .env or Streamlit Secrets")
 
 # Load Model
 @st.cache_resource

@@ -19,11 +19,9 @@ def _get_etherscan_key():
         key = os.getenv("ETHERSCAN_API_KEY")
     return key
 
-API_KEY = _get_etherscan_key()
-
 def fetch_normal_transactions(wallet_address: str) -> list:
     """Fetch all normal ETH transactions for wallet"""
-    
+    api_key = _get_etherscan_key()
     params = {
         "chainid": 1,
         "module": "account",
@@ -32,7 +30,7 @@ def fetch_normal_transactions(wallet_address: str) -> list:
         "startblock": 0,
         "endblock": 99999999,
         "sort": "asc",
-        "apikey": API_KEY
+        "apikey": api_key
     }
     
     response = requests.get(ETHERSCAN_BASE, params=params)
@@ -46,14 +44,14 @@ def fetch_normal_transactions(wallet_address: str) -> list:
 
 def fetch_erc20_transactions(wallet_address: str) -> list:
     """Fetch all ERC20 token transactions"""
-    
+    api_key = _get_etherscan_key()
     params = {
         "chainid": 1,
         "module": "account",
         "action": "tokentx",
         "address": wallet_address,
         "sort": "asc",
-        "apikey": API_KEY
+        "apikey": api_key
     }
     
     response = requests.get(ETHERSCAN_BASE, params=params)
@@ -65,14 +63,14 @@ def fetch_erc20_transactions(wallet_address: str) -> list:
 
 def fetch_eth_balance(wallet_address: str) -> float:
     """Fetch current ETH balance"""
-    
+    api_key = _get_etherscan_key()
     params = {
         "chainid": 1,
         "module": "account",
         "action": "balance",
         "address": wallet_address,
         "tag": "latest",
-        "apikey": API_KEY
+        "apikey": api_key
     }
     
     response = requests.get(ETHERSCAN_BASE, params=params)
@@ -85,14 +83,14 @@ def fetch_eth_balance(wallet_address: str) -> float:
 
 def fetch_created_contracts(wallet_address: str) -> list:
     """Fetch contracts created by this wallet"""
-    
+    api_key = _get_etherscan_key()
     params = {
         "chainid": 1,
         "module": "account",
         "action": "txlistinternal",
         "address": wallet_address,
         "sort": "asc",
-        "apikey": API_KEY
+        "apikey": api_key
     }
     
     response = requests.get(ETHERSCAN_BASE, params=params)
