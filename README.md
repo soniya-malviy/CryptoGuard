@@ -2,7 +2,7 @@
 
 CryptoGuard is an enterprise-grade blockchain investigation platform. It combines a highly accurate XGBoost Machine Learning model with a 6-Agent AI Swarm to autonomously audit Ethereum wallets, detect criminal behavior, and generate actionable compliance reports.
 
-## 🌟 Key Features
+## Key Features
 
 *   **Etherscan V2 Integration:** Automatically fetches live transaction history, ERC20 tokens, and contract data for any Ethereum wallet.
 *   **XGBoost Risk Scoring:** Uses a binary Logistic XGBoost Classifier (trained on a real-world dataset of 9,841 verified wallets) to predict fraud probability with **94% accuracy**.
@@ -10,14 +10,14 @@ CryptoGuard is an enterprise-grade blockchain investigation platform. It combine
 *   **Hallucination Prevention:** Built with "Chain-of-Thought" (CoT) structures and explicit "I Don't Know" constraints to ensure the AI never guesses or falsely flags innocent wallets.
 *   **Enterprise Dashboard:** A beautiful, non-technical Streamlit UI that clearly displays Risk Actions (FREEZE, WATCHLIST, CLEAR), Live Telemetry, and downloadable PDF/TXT reports.
 
-## 💻 Technical Stack
+## Technical Stack
 - **Brain**: XGBoost (Extreme Gradient Boosting)
 - **AI Analyst**: Llama-3.1 (via Groq Cloud API)
 - **Frontend**: Streamlit (Python-based Web Framework)
 - **Visuals**: Plotly (Interactive Indicators & Charts)
 - **Data**: Scikit-Learn (Scaling), Pandas (Manipulation)
 
-## 🤖 The 6-Agent Pipeline
+## The 6-Agent Pipeline
 
 When an address is submitted, the autonomous pipeline triggers:
 
@@ -28,7 +28,7 @@ When an address is submitted, the autonomous pipeline triggers:
 5.  **Agent 4 (Report Writer):** Generates a comprehensive, human-readable forensic document summarizing the investigation.
 6.  **Agent 5 (Action Decider):** Acts as the final Maker-Checker. Reviews all prior agent logic and issues the final compliance action: `FREEZE`, `ESCALATE`, or `CLEAR`.
 
-## 🛠️ Installation & Setup
+## Installation & Setup
 
 ### Prerequisites
 *   Python 3.11+
@@ -59,7 +59,7 @@ Launch the Streamlit dashboard:
 python -m streamlit run app/main.py
 ```
 
-## 🧠 Model Training
+## Model Training
 
 The `fraud_model.pkl` is trained on a cleaned subset of the Kaggle *Ethereum Fraud Detection Dataset*. It relies entirely on standard Ethereum features (like transaction velocity and ETH balances) and intentionally ignores ERC20 token values to prevent feature-pipeline mismatches caused by varying token decimals.
 
@@ -72,7 +72,7 @@ To retrain the model locally:
 1. Ensure the Kaggle dataset is preprocessed to `data/crypto_real_dataset.csv`.
 2. Run `python model/train_final.py`.
 
-## 🛡️ Security & Deployment
+## Security & Deployment
 - **Local Development**: Uses `.env` for secret management (ignored by Git).
 - **Production**: Supports **Streamlit Secrets** for safe deployment on the cloud.
 - **XSRF Protection**: Configured via `.streamlit/config.toml` to handle large file uploads securely.
@@ -82,7 +82,7 @@ This project is for educational and research purposes. It is not financial advic
 
 ---
 
-## 🤝 About the Project
+## About the Project
 CryptoGuard was developed as an **Open Research Project** to democratize blockchain security. Our goal is to make decentralized finance safer by providing clear, explainable, and accessible forensic tools for everyone—from students to institutional analysts.
 
 © 2026 CryptoGuard | Empowering Digital Safety
