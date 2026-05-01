@@ -7,10 +7,10 @@ from sklearn.metrics import classification_report
 import pickle
 import os
 
-print("🚀 Training Final Model on crypto_5000_dataset.csv...")
+print("🚀 Training Final Model on crypto_real_dataset.csv...")
 
 # Load data
-df = pd.read_csv("data/crypto_5000_dataset.csv")
+df = pd.read_csv("data/crypto_real_dataset.csv")
 
 # Features and Target
 target = 'label'
@@ -32,15 +32,15 @@ X_train, X_test, y_train, y_test = train_test_split(
     X_scaled, y, test_size=0.2, random_state=42, stratify=y
 )
 
-# Training (Multi-class)
+# Training (Binary)
 print(f"Training on {X_train.shape[0]} rows with {X_train.shape[1]} features...")
 model = xgb.XGBClassifier(
     n_estimators=500,
     max_depth=6,
     learning_rate=0.05,
-    objective='multi:softprob',
-    num_class=4,
-    eval_metric='mlogloss',
+    objective='binary:logistic',
+    eval_metric='logloss',
+    scale_pos_weight=(len(y_train) - sum(y_train)) / sum(y_train),
     random_state=42
 )
 

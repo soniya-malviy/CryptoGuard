@@ -40,12 +40,11 @@ def predict_fraud(transaction_data: dict) -> dict:
     # Predict probabilities for all classes
     probs = model.predict_proba(X_scaled)[0]
     
-    # Classes: 0: Legit, 1: Phishing, 2: Scam, 3: Hack
-    # Fraud probability is sum of probs[1], probs[2], probs[3]
-    fraud_prob = float(np.sum(probs[1:]))
+    # Binary classification: 0: Legit, 1: Fraud
+    fraud_prob = float(probs[1])
     prediction = int(np.argmax(probs))
     
-    class_names = {0: "Legit", 1: "Phishing", 2: "Scam", 3: "Hack"}
+    class_names = {0: "Legit", 1: "Fraud"}
     verdict = class_names.get(prediction, "Unknown")
     
     # Feature impact (Local Contribution)

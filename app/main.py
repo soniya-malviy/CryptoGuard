@@ -12,6 +12,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from model.predict import load_model, predict_fraud
     from app.llm_explain import get_fraud_explanation
+    from app.pipeline import run_full_pipeline
 except ImportError as e:
     st.error(f"Import Error: {e}")
     st.stop()
@@ -115,146 +116,140 @@ if st.session_state.page == "Dashboard":
     st.title("Transaction Forensics & Risk Scoring")
     st.markdown("Automated blockchain compliance audit for institutional wallets.")
 
-    col_l, col_r = st.columns([1.2, 2.8])
+    st.markdown("<br>", unsafe_allow_html=True)
     
-    with col_l:
-        st.markdown("""<div class='risk-card'>
-            <h4>Audit Configuration</h4>
-            <p style='font-size:0.9rem; opacity:0.7'>Define the transaction parameters to initiate audit.</p>
-        </div>""", unsafe_allow_html=True)
-        
-        mode = st.radio("Audit Mode", ["Scenario Simulation", "Direct Entry", "Batch Compliance"], key="audit_mode")
-        
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        wallet_address = st.text_input(
+            "Ethereum Wallet Address",
+            placeholder="0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+            help="Enter any public Ethereum wallet address to begin the investigation",
+            label_visibility="collapsed"
+        )
+    with col2:
+        analyze_clicked = st.button(
+            "🚀 Investigate Wallet", 
+            type="primary", 
+            use_container_width=True,
+            disabled=not wallet_address
+        )
+
+    # Show wallet preview while user types
+    if wallet_address and len(wallet_address) == 42:
+        st.success("✅ Valid Ethereum address format")
+    elif wallet_address:
+        st.error("❌ Invalid address (must be exactly 42 characters)")
+
+    st.sidebar.title("🧪 Quick Test")
+    # Show sample suspicious wallets to test
+    with st.sidebar.expander("Load sample wallets"):
+        st.caption("Try these known wallets:")
+        samples = {
+            "High Risk": "0x00000000219ab540356cBB839Cbe05303d7705Fa",
+            "Medium Risk": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "Low Risk": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+        }
+        for label, addr in samples.items():
+            if st.button(f"{label}: {addr[:10]}..."):
+                wallet_address = addr
+                st.session_state.audit_address = addr
+                st.rerun()
+
+    if analyze_clicked:
+        st.session_state.audit_active = True
+        st.session_state.audit_address = wallet_address
+
+    if st.session_state.get('audit_active', False):
+        address = st.session_state.audit_address
         st.divider()
+        st.markdown(f"#### 🤖 Investigating Wallet: `{address}`")
+        st.caption("Running the complete 6-agent autonomous AI pipeline for deep forensic analysis...")
         
-        if mode == "Scenario Simulation":
-            scenario = st.selectbox("Select Threat Vector", 
-                                   ["Standard Retail User", "Phishing Signature", "High-Volume Scam Wallet", "Network Exploit Activity"],
-                                   key="scenario_select")
+        with st.spinner("🤖 Running 6-agent pipeline... This may take a minute."):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
             
-            samples = {
-                "Phishing Signature": {
-                    'sent_tnx': 71, 'received_tnx': 81, 'avg_min_between_sent_tnx': 25.5, 'avg_min_between_received_tnx': 98.2,
-                    'time_diff_between_first_and_last_mins': 22333.3, 'number_of_created_contracts': 0, 'total_ether_sent': 62.6,
-                    'total_ether_balance': 13.8, 'avg_val_sent': 1.9, 'avg_val_received': 2.8, 'max_value_received': 9.5,
-                    'erc20_total_received': 9.9, 'erc20_total_sent': 6.2, 'erc20_uniq_sent_addr': 10, 'erc20_uniq_rec_addr': 11,
-                    'erc20_avg_time_sent': 41.1, 'erc20_avg_time_rec': 56.0
-                },
-                "Standard Retail User": {
-                    'sent_tnx': 10, 'received_tnx': 14, 'avg_min_between_sent_tnx': 99.5, 'avg_min_between_received_tnx': 156.7,
-                    'time_diff_between_first_and_last_mins': 15072.2, 'number_of_created_contracts': 0, 'total_ether_sent': 3.8,
-                    'total_ether_balance': 48.4, 'avg_val_sent': 0.5, 'avg_val_received': 0.8, 'max_value_received': 1.9,
-                    'erc20_total_received': 4.7, 'erc20_total_sent': 5.2, 'erc20_uniq_sent_addr': 2, 'erc20_uniq_rec_addr': 4,
-                    'erc20_avg_time_sent': 238.4, 'erc20_avg_time_rec': 194.4
-                },
-                "High-Volume Scam Wallet": {
-                    'sent_tnx': 217, 'received_tnx': 270, 'avg_min_between_sent_tnx': 26.9, 'avg_min_between_received_tnx': 26.6,
-                    'time_diff_between_first_and_last_mins': 10322.3, 'number_of_created_contracts': 15, 'total_ether_sent': 339.8,
-                    'total_ether_balance': 3.8, 'avg_val_sent': 2.6, 'avg_val_received': 2.2, 'max_value_received': 32.4,
-                    'erc20_total_received': 296.3, 'erc20_total_sent': 159.7, 'erc20_uniq_sent_addr': 25, 'erc20_uniq_rec_addr': 131,
-                    'erc20_avg_time_sent': 17.8, 'erc20_avg_time_rec': 11.6
-                },
-                "Network Exploit Activity": {
-                    'sent_tnx': 433, 'received_tnx': 193, 'avg_min_between_sent_tnx': 3.9, 'avg_min_between_received_tnx': 1.6,
-                    'time_diff_between_first_and_last_mins': 36468.7, 'number_of_created_contracts': 17, 'total_ether_sent': 411.9,
-                    'total_ether_balance': 1.2, 'avg_val_sent': 0.3, 'avg_val_received': 4.2, 'max_value_received': 97.7,
-                    'erc20_total_received': 110.9, 'erc20_total_sent': 142.5, 'erc20_uniq_sent_addr': 83, 'erc20_uniq_rec_addr': 21,
-                    'erc20_avg_time_sent': 18.6, 'erc20_avg_time_rec': 8.9
-                }
-            }
-            data = samples[scenario]
-            audit_btn = st.button(" INITIATE FORENSIC AUDIT", width="stretch")
-
-        elif mode == "Direct Entry":
-            st.markdown("---")
-            st.write("**Core Ledger Data**")
-            s_tnx = st.number_input("Sent Tnx", 0, 10000, 71)
-            r_tnx = st.number_input("Received Tnx", 0, 10000, 81)
-            bal = st.number_input("ETH Balance", 0.0, 10000.0, 13.8)
-            with st.expander("Advanced Network Parameters"):
-                data = {
-                    'sent_tnx': s_tnx, 'received_tnx': r_tnx, 'total_ether_balance': bal,
-                    'avg_min_between_sent_tnx': st.number_input("Avg gap sent", 0.0, 1000.0, 25.5),
-                    'avg_min_between_received_tnx': st.number_input("Avg gap rec", 0.0, 1000.0, 98.2),
-                    'time_diff_between_first_and_last_mins': st.number_input("Wallet Age", 0.0, 1000000.0, 22333.3),
-                    'number_of_created_contracts': st.number_input("Contracts", 0, 1000, 0),
-                    'total_ether_sent': st.number_input("Total Sent", 0.0, 10000.0, 62.6),
-                    'avg_val_sent': st.number_input("Avg Sent", 0.0, 10000.0, 1.9),
-                    'avg_val_received': st.number_input("Avg Rec", 0.0, 10000.0, 2.8),
-                    'max_value_received': st.number_input("Max Rec", 0.0, 10000.0, 9.5),
-                    'erc20_total_received': st.number_input("Token Rec", 0.0, 100000.0, 9.9),
-                    'erc20_total_sent': st.number_input("Token Sent", 0.0, 100000.0, 6.2),
-                    'erc20_uniq_sent_addr': st.number_input("Unique Sent", 0, 1000, 10),
-                    'erc20_uniq_rec_addr': st.number_input("Unique Rec", 0, 1000, 11),
-                    'erc20_avg_time_sent': st.number_input("Token Time Sent", 0.0, 10000.0, 41.1),
-                    'erc20_avg_time_rec': st.number_input("Token Time Rec", 0.0, 10000.0, 56.0),
-                }
-            audit_btn = st.button("INITIATE FORENSIC AUDIT", width="stretch")
+            def update_progress(num, name, status):
+                progress_bar.progress((num) * 20 if num > 0 else 5)
+                status_text.text(f"Agent {num}/5: {name} — {status}")
             
-        else:
-            uploaded = st.file_uploader("Upload Batch CSV", type="csv")
-            if uploaded:
-                st.success("✅ Dataset Validated.")
-                if st.button(" START BATCH COMPLIANCE", width="stretch"):
-                    df_up = pd.read_csv(uploaded)
-                    results = [predict_fraud(row.to_dict()) for _, row in df_up.iterrows()]
-                    st.dataframe(pd.DataFrame(results)[["verdict", "risk_score", "risk_level"]], width="stretch")
-            audit_btn = False
-
-    with col_r:
-        if 'audit_btn' in locals() and audit_btn:
-            with st.spinner("⚡ Processing cryptographic signatures..."):
-                res = predict_fraud(data)
-            
-            # THE "GENUINE" VERDICT PANEL
-            v_color = "#10B981" if res['verdict'] == "Legit" else "#EF4444"
-            st.markdown(f"""
-            <div class='risk-card' style='border-left: 8px solid {v_color}'>
-                <h3 style='color: {v_color}; margin:0'>OFFICIAL VERDICT: {res['verdict'].upper()}</h3>
-                <p style='opacity:0.8'>This audit was performed by the CryptoGuard XGB-42 Engine. The risk score is determined by behavioral delta compared to institutional norms.</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # SCORE METRICS
-            c1, c2, c3 = st.columns(3)
-            with c1: st.metric("Risk Probability", f"{res['risk_score']:.1%}")
-            with c2: st.metric("Risk Level", res['risk_level'])
-            with c3: st.metric("Security Verdict", res['verdict'])
+            try:
+                pipeline_result = run_full_pipeline(address, progress_callback=update_progress)
+                progress_bar.progress(100)
+                status_text.text("✅ Pipeline complete!")
+            except Exception as e:
+                st.error(f"Pipeline error: {e}")
+                pipeline_result = None
+        
+        if pipeline_result:
+            # Wallet Telemetry
+            st.subheader("📊 Live Wallet Telemetry")
+            w_data = pipeline_result.get("wallet_data", {})
+            meta = w_data.get("_meta", {})
+            if "error" in w_data:
+                st.warning(f"Data Fetcher Notice: {w_data['error']}")
+            else:
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("ETH Balance", f"{w_data.get('total_ether_balance', 0):.4f} ETH")
+                m2.metric("Total Tnx", meta.get("total_transactions", 0))
+                m3.metric("Sent Tnx", w_data.get("sent_tnx", 0))
+                m4.metric("Recv Tnx", w_data.get("received_tnx", 0))
+                
+                with st.expander("Advanced: Raw Transaction Metrics"):
+                    st.json(w_data)
             
             st.divider()
             
-            # AI ANALYST PANEL
-            st.markdown("#### AI Forensic Explanation")
-            with st.spinner("AI Analyst generating report..."):
-                explanation = get_fraud_explanation(res['risk_score'], res['risk_level'], res['verdict'], data)
-            st.markdown(f"<div class='risk-card' style='background:rgba(255,255,255,0.02); font-size:1.1rem; border:none'>{explanation}</div>", unsafe_allow_html=True)
+            # Action Badge
+            action = pipeline_result.get('final_action', 'CLEAR')
+            action_display = {
+                "FREEZE": "🔴 FREEZE WALLET",
+                "WATCHLIST": "🟡 ADD TO WATCHLIST",
+                "CLEAR": "🟢 WALLET CLEARED",
+                "ESCALATE": "🟠 ESCALATE TO HUMAN",
+            }
+            badge_text = action_display.get(action, action)
+            if action == "FREEZE":
+                st.error(badge_text)
+            elif action in ("WATCHLIST", "ESCALATE"):
+                st.warning(badge_text)
+            else:
+                st.success(badge_text)
             
-            # VISUAL PROOF
-            with st.expander("Technical Evidence & Attribution"):
-                la, ra = st.columns(2)
-                with la:
-                    fig = go.Figure(go.Indicator(
-                        mode = "gauge+number",
-                        value = res['risk_score']*100,
-                        domain = {'x': [0, 1], 'y': [0, 1]},
-                        title = {'text': "Confidence Gauge"},
-                        gauge = {'axis': {'range': [None, 100]}, 'bar': {'color': v_color}}
-                    ))
-                    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"}, height=300)
-                    st.plotly_chart(fig, width="stretch")
-                with ra:
-                    feat_names = [f[0].replace('_', ' ').title() for f in res['top_features']]
-                    feat_scores = [f[1] for f in res['top_features']]
-                    fig2 = px.bar(x=feat_scores, y=feat_names, orientation='h', title="Primary Risk Vectors")
-                    fig2.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font={'color': "white"}, height=300)
-                    st.plotly_chart(fig2, width="stretch")
-        else:
-            # DASHBOARD WELCOME
-            st.markdown("""<div style='text-align:center; padding: 100px 20px;'>
-                <h1 style='opacity:0.2'>SYSTEM IDLE</h1>
-                <p style='opacity:0.4'>Select a wallet scenario or input transaction data to begin forensic analysis.</p>
-                <img src='https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=800' style='width:400px; border-radius:20px; opacity:0.5; margin-top:20px'>
-            </div>""", unsafe_allow_html=True)
+            if pipeline_result.get('action_reason'):
+                st.info(f"**Reason:** {pipeline_result['action_reason']}")
+            
+            # Agent Pipeline Audit Log
+            st.subheader("🤖 Agent Pipeline Log")
+            for log_entry in pipeline_result.get('audit_log', []):
+                agent_name = log_entry.get('agent', 'Unknown')
+                ts = log_entry.get('timestamp', '')
+                with st.expander(f"Agent: {agent_name} — {ts}"):
+                    st.json(log_entry)
+            
+            # Investigation Report
+            st.subheader("📋 Investigation Report")
+            report_text = pipeline_result.get('report_text', 'No report generated.')
+            st.text_area("Full Report", report_text, height=300, key="report_area")
+            
+            dl_col, badge_col = st.columns(2)
+            with dl_col:
+                st.download_button(
+                    "📥 Download Report",
+                    report_text,
+                    file_name="cryptoguard_report.txt",
+                    key="dl_report",
+                )
+            with badge_col:
+                fp = pipeline_result.get('report_filepath', '')
+                if fp:
+                    st.caption(f"Saved to: {fp}")
+    else:
+        # DASHBOARD WELCOME
+        st.markdown("""<div style='text-align:center; padding: 60px 20px;'>
+            <p style='opacity:0.4; font-size: 1.2rem;'>Enter an Ethereum address above to begin the automated compliance investigation.</p>
+            <img src='https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=800' style='width:400px; border-radius:20px; opacity:0.5; margin-top:20px'>
+        </div>""", unsafe_allow_html=True)
 
 # --- GUIDE PAGE ---
 elif st.session_state.page == "Guide":
@@ -263,31 +258,30 @@ elif st.session_state.page == "Guide":
     
     st.markdown("""
     <div class='risk-card'>
-        <h3>1. Selecting an Audit Mode</h3>
-        <p>Go to the <b>Risk Dashboard</b> and choose one of the three modes in the left panel:</p>
-        <ul>
-            <li><b>Scenario Simulation:</b> Best for beginners. Select a pre-defined threat (e.g., 'Phishing') to see how the system identifies specific criminal signatures.</li>
-            <li><b>Direct Entry:</b> For auditing a specific wallet. Manually enter the transaction metrics (Total Sent, Balance, etc.) to get an immediate risk score.</li>
-            <li><b>Batch Compliance:</b> Institutional use. Upload a CSV file containing multiple wallet records to perform a mass audit.</li>
-        </ul>
+        <h3>1. Submitting a Wallet</h3>
+        <p>Simply enter an Ethereum wallet address into the top search bar on the Dashboard and click <b>Investigate Wallet</b>.</p>
+        <p>Alternatively, use the quick-test options in the sidebar to load pre-configured addresses known for illicit behavior.</p>
     </div>
     
     <div class='risk-card'>
-        <h3>2. Initiating the Audit</h3>
-        <p>Once your data is ready, click the <b>INITIATE FORENSIC AUDIT</b> button. The system will:</p>
+        <h3>2. The Autonomous AI Investigation</h3>
+        <p>Once submitted, CryptoGuard launches a 6-agent AI swarm to audit the wallet:</p>
         <ol>
-            <li>Run the raw data through the XGBoost Model.</li>
-            <li>Generate a Risk Probability score (0% to 100%).</li>
-            <li>Pass the context to our Llama-3 AI Analyst for a plain-English explanation.</li>
+            <li><b>Data Fetcher:</b> Connects to Etherscan to pull live transaction history.</li>
+            <li><b>Risk Scorer:</b> Runs raw metrics through a binary Logistic XGBoost Model to calculate fraud probability.</li>
+            <li><b>Pattern Classifier:</b> Analyzes transaction velocity and circular flow using deterministic rules.</li>
+            <li><b>Evidence Collector:</b> Synthesizes high-impact anomalies to build a case file.</li>
+            <li><b>Report Writer:</b> Generates a human-readable forensic document.</li>
+            <li><b>Action Decider:</b> Makes the final call to CLEAR, ESCALATE, or FREEZE the wallet.</li>
         </ol>
     </div>
     
     <div class='risk-card'>
         <h3>3. Interpreting Results</h3>
         <ul>
-            <li><b>Risk Level:</b> 'Low' is green/safe, 'High' is red/dangerous.</li>
-            <li><b>AI Explanation:</b> Read the 3-sentence summary for the 'Why' behind the score.</li>
-            <li><b>Technical Proof:</b> Expand this section to see which specific transaction behaviors triggered the alert.</li>
+            <li><b>Final Action:</b> Displayed as a large badge. Green is Safe, Yellow requires Human Review, Red indicates active Fraud.</li>
+            <li><b>Agent Log:</b> Expand the pipeline log to see the Chain-of-Thought reasoning of each AI agent.</li>
+            <li><b>Investigation Report:</b> Download the final PDF/TXT report for your compliance records.</li>
         </ul>
     </div>
     """, unsafe_allow_html=True)
@@ -300,12 +294,12 @@ elif st.session_state.page == "Intelligence":
     
     # Calculate Real Stats
     try:
-        df_stats = pd.read_csv("data/crypto_5000_dataset.csv")
+        df_stats = pd.read_csv("data/crypto_real_dataset.csv")
         total_patterns = len(df_stats)
         threat_count = len(df_stats[df_stats['label'] != 0])
         threat_pct = (threat_count / total_patterns) * 100
     except:
-        total_patterns, threat_count, threat_pct = 5000, 2400, 48.0
+        total_patterns, threat_count, threat_pct = 9841, 2179, 22.1
 
     c_a, c_b, c_c = st.columns(3)
     with c_a: st.metric("Patterns Analyzed", f"{total_patterns:,}", "Proprietary Data")

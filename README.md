@@ -1,71 +1,64 @@
-# 🛡️ CryptoGuard: Enterprise-Grade AI Fraud Detection
+# 🛡️ CryptoGuard: Autonomous Forensic Pipeline
 
-CryptoGuard is a sophisticated blockchain forensic platform designed to detect and explain malicious activity on the Ethereum network. By combining **XGBoost Machine Learning** with **Explainable AI (Llama-3.1)**, it provides users with transparent, high-accuracy risk assessments.
+CryptoGuard is an enterprise-grade blockchain investigation platform. It combines a highly accurate XGBoost Machine Learning model with a 6-Agent AI Swarm to autonomously audit Ethereum wallets, detect criminal behavior, and generate actionable compliance reports.
 
----
+## 🌟 Key Features
 
-## 🚀 Core Features
-- **Multi-Class Detection**: Identifies 4 distinct wallet profiles: `Legit`, `Phishing`, `Scam`, and `Hack`.
-- **Explainable AI (XAI)**: Generates human-readable forensic reports using Llama-3.1 to explain the "Why" behind every score.
-- **Dynamic Risk Vectors**: Visualizes the specific behavioral triggers for every audit (Local Feature Impact).
-- **Enterprise Dashboard**: A premium UI with Dark/Light mode support, live Threat Intelligence, and a comprehensive User Guide.
-- **Batch Processing**: Supports auditing thousands of wallets at once via CSV upload.
+*   **Etherscan V2 Integration:** Automatically fetches live transaction history, ERC20 tokens, and contract data for any Ethereum wallet.
+*   **XGBoost Risk Scoring:** Uses a binary Logistic XGBoost Classifier (trained on a real-world dataset of 9,841 verified wallets) to predict fraud probability with **94% accuracy**.
+*   **6-Agent Swarm Intelligence:** Powered by LLMs (e.g., Groq / Llama-3.1), the system uses a sequential agent pipeline to analyze patterns, build evidence, and decide compliance actions.
+*   **Hallucination Prevention:** Built with "Chain-of-Thought" (CoT) structures and explicit "I Don't Know" constraints to ensure the AI never guesses or falsely flags innocent wallets.
+*   **Enterprise Dashboard:** A beautiful, non-technical Streamlit UI that clearly displays Risk Actions (FREEZE, WATCHLIST, CLEAR), Live Telemetry, and downloadable PDF/TXT reports.
 
----
+## 🤖 The 6-Agent Pipeline
 
-## 🛠️ Technical Stack
-- **Brain**: XGBoost (Extreme Gradient Boosting)
-- **AI Analyst**: Llama-3.1 (via Groq Cloud API)
-- **Frontend**: Streamlit (Python-based Web Framework)
-- **Visuals**: Plotly (Interactive Indicators & Charts)
-- **Data**: Scikit-Learn (Scaling), Pandas (Manipulation)
+When an address is submitted, the autonomous pipeline triggers:
 
----
+1.  **Agent 0 (Data Fetcher):** Queries the Etherscan V2 API, cleans the data, and constructs the 11 core transaction features needed by the ML model.
+2.  **Agent 1 (Risk Scorer):** Injects the data into the XGBoost model to get a strict mathematical fraud probability (0% to 100%).
+3.  **Agent 2 (Pattern Classifier):** Uses deterministic AI reasoning to categorize the exact *type* of fraud (e.g., Wash Trading, Phishing, Scam, or None).
+4.  **Agent 3 (Evidence Collector):** Scans the raw data for specific anomalies (e.g., "Sent Transactions are 4.1x above normal") to build a criminal case file.
+5.  **Agent 4 (Report Writer):** Generates a comprehensive, human-readable forensic document summarizing the investigation.
+6.  **Agent 5 (Action Decider):** Acts as the final Maker-Checker. Reviews all prior agent logic and issues the final compliance action: `FREEZE`, `ESCALATE`, or `CLEAR`.
 
-## ⚙️ Installation & Setup
+## 🛠️ Installation & Setup
 
-### 1. Clone & Install Dependencies
+### Prerequisites
+*   Python 3.11+
+*   An [Etherscan API Key](https://etherscan.io/apis)
+*   A [Groq API Key](https://console.groq.com/keys) (for the LLM agents)
+
+### 1. Clone the repository
 ```bash
-git clone https://github.com/yourusername/CryptoGuard.git
-cd CryptoGuard
+git clone https://github.com/yourusername/cryptoguard.git
+cd cryptoguard
+```
+
+### 2. Install dependencies
+```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure API Keys
-Create a `.env` file in the root directory and add your Groq API Key:
-```text
-GROQ_API_KEY=your_gsk_key_here
-```
-
-### 3. Model Training (Optional)
-The pre-trained model is already included in the `model/` folder. To retrain it on the 5k dataset:
-```bash
-python model/train_final.py
+### 3. Configure Environment Variables
+Create a `.env` file in the root directory:
+```env
+GROQ_API_KEY="your_groq_api_key_here"
+ETHERSCAN_API_KEY="your_etherscan_api_key_here"
 ```
 
 ### 4. Run the Platform
+Launch the Streamlit dashboard:
 ```bash
-streamlit run app/main.py
+python -m streamlit run app/main.py
 ```
 
----
+## 🧠 Model Training
 
-## 📊 Model Performance
-Our XGBoost model is trained on **5,002 cryptographic behavioral signatures**, achieving:
-- **Precision**: 100%
-- **Recall**: 100%
-- **Dataset**: Proprietary Ethereum Forensic Dataset
+The `fraud_model.pkl` is trained on a cleaned subset of the Kaggle *Ethereum Fraud Detection Dataset*. It relies entirely on standard Ethereum features (like transaction velocity and ETH balances) and intentionally ignores ERC20 token values to prevent feature-pipeline mismatches caused by varying token decimals.
 
----
+To retrain the model locally:
+1. Ensure the Kaggle dataset is preprocessed to `data/crypto_real_dataset.csv`.
+2. Run `python model/train_final.py`.
 
-## 🔒 Security & Deployment
-- **Local Development**: Uses `.env` for secret management (ignored by Git).
-- **Production**: Supports **Streamlit Secrets** for safe deployment on the cloud.
-- **XSRF Protection**: Configured via `.streamlit/config.toml` to handle large file uploads securely.
-
----
-
-## 🎓 About the Project
-CryptoGuard was developed as an **Open Research Project** to democratize blockchain security. Our goal is to make decentralized finance safer by providing clear, explainable, and accessible forensic tools for everyone—from students to institutional analysts.
-
-© 2026 CryptoGuard | Empowering Digital Safety
+## 📄 License
+This project is for educational and research purposes. It is not financial advice.
