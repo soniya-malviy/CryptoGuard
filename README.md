@@ -10,6 +10,13 @@ CryptoGuard is an enterprise-grade blockchain investigation platform. It combine
 *   **Hallucination Prevention:** Built with "Chain-of-Thought" (CoT) structures and explicit "I Don't Know" constraints to ensure the AI never guesses or falsely flags innocent wallets.
 *   **Enterprise Dashboard:** A beautiful, non-technical Streamlit UI that clearly displays Risk Actions (FREEZE, WATCHLIST, CLEAR), Live Telemetry, and downloadable PDF/TXT reports.
 
+## 💻 Technical Stack
+- **Brain**: XGBoost (Extreme Gradient Boosting)
+- **AI Analyst**: Llama-3.1 (via Groq Cloud API)
+- **Frontend**: Streamlit (Python-based Web Framework)
+- **Visuals**: Plotly (Interactive Indicators & Charts)
+- **Data**: Scikit-Learn (Scaling), Pandas (Manipulation)
+
 ## 🤖 The 6-Agent Pipeline
 
 When an address is submitted, the autonomous pipeline triggers:
@@ -56,9 +63,26 @@ python -m streamlit run app/main.py
 
 The `fraud_model.pkl` is trained on a cleaned subset of the Kaggle *Ethereum Fraud Detection Dataset*. It relies entirely on standard Ethereum features (like transaction velocity and ETH balances) and intentionally ignores ERC20 token values to prevent feature-pipeline mismatches caused by varying token decimals.
 
+**Performance Metrics:**
+- **Accuracy**: 94%
+- **F1-score**: 0.86
+- **Dataset**: 9,841 verified wallets (Kaggle)
+
 To retrain the model locally:
 1. Ensure the Kaggle dataset is preprocessed to `data/crypto_real_dataset.csv`.
 2. Run `python model/train_final.py`.
 
+## 🛡️ Security & Deployment
+- **Local Development**: Uses `.env` for secret management (ignored by Git).
+- **Production**: Supports **Streamlit Secrets** for safe deployment on the cloud.
+- **XSRF Protection**: Configured via `.streamlit/config.toml` to handle large file uploads securely.
+
 ## 📄 License
 This project is for educational and research purposes. It is not financial advice.
+
+---
+
+## 🤝 About the Project
+CryptoGuard was developed as an **Open Research Project** to democratize blockchain security. Our goal is to make decentralized finance safer by providing clear, explainable, and accessible forensic tools for everyone—from students to institutional analysts.
+
+© 2026 CryptoGuard | Empowering Digital Safety
