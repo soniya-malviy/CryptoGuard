@@ -7,7 +7,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ETHERSCAN_BASE = "https://api.etherscan.io/v2/api"
-API_KEY = os.getenv("ETHERSCAN_API_KEY")
+
+def _get_etherscan_key():
+    key = None
+    try:
+        import streamlit as st
+        key = st.secrets.get("ETHERSCAN_API_KEY")
+    except Exception:
+        pass
+    if not key:
+        key = os.getenv("ETHERSCAN_API_KEY")
+    return key
+
+API_KEY = _get_etherscan_key()
 
 def fetch_normal_transactions(wallet_address: str) -> list:
     """Fetch all normal ETH transactions for wallet"""
