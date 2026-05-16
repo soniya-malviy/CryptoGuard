@@ -1,5 +1,5 @@
 def format_eth(value):
-    return f"{value:.4f} ETH"
+    return f"{value:.18g} ETH"
 
 def format_timestamp(ts):
     import datetime

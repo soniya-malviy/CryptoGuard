@@ -212,16 +212,36 @@ if st.session_state.page == "Dashboard":
                 st.warning(f"Data Fetcher Notice: {w_data['error']}")
             else:
                 m1, m2, m3, m4 = st.columns(4)
-                m1.metric("ETH Balance", f"{w_data.get('total_ether_balance', 0):.4f} ETH")
+                m1.metric("ETH Balance", f"{w_data.get('total_ether_balance', 0):.18g} ETH")
                 m2.metric("Total Tnx", meta.get("total_transactions", 0))
                 m3.metric("Sent Tnx", w_data.get("sent_tnx", 0))
                 m4.metric("Recv Tnx", w_data.get("received_tnx", 0))
-                
+
                 with st.expander("Advanced: Raw Transaction Metrics"):
                     st.json(w_data)
-            
+
             st.divider()
-            
+
+            # ── Risk Score Display (single source of truth: consolidated_risk) ──
+            consolidated_risk = pipeline_result.get("consolidated_risk", pipeline_result.get("risk_score", 0.0))
+            consolidated_level = pipeline_result.get("consolidated_level", pipeline_result.get("risk_level", "LOW"))
+            fraud_type = pipeline_result.get("fraud_type", "NONE")
+            fraud_confidence = pipeline_result.get("fraud_confidence", 0.0)
+
+            r1, r2, r3 = st.columns(3)
+            r1.metric(
+                "Consolidated Risk Score",
+                f"{consolidated_risk:.1%}",
+                help="Final risk score after ML + pattern analysis. This is the single source of truth."
+            )
+            r2.metric("Risk Level", consolidated_level)
+            r3.metric(
+                "Pattern Detected",
+                f"{fraud_type} ({fraud_confidence:.0%})" if fraud_type != "NONE" else "None",
+            )
+
+            st.divider()
+
             # Action Badge
             action = pipeline_result.get('final_action', 'CLEAR')
             action_display = {
@@ -237,9 +257,9 @@ if st.session_state.page == "Dashboard":
                 st.warning(badge_text)
             else:
                 st.success(badge_text)
-            
+
             if pipeline_result.get('action_reason'):
-                st.info(f"**Reason:** {pipeline_result['action_reason']}")
+                st.info(pipeline_result['action_reason'])
             
             # Agent Pipeline Audit Log
             st.subheader("🤖 Agent Pipeline Log")

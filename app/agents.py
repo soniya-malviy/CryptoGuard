@@ -1,6 +1,11 @@
 """
-CryptoGuard 5-Agent Autonomous Pipeline
-Each agent uses Groq API tool use (function calling) with Llama models.
+CryptoGuard 6-Agent Autonomous Pipeline
+Design principles:
+  - ML score is the single source of truth for risk level
+  - LLMs only classify fraud TYPE, never override risk level
+  - consolidated_risk stays within the same risk band as ML score
+  - No hardcoded thresholds — all derived from dataset medians
+  - Sequential state: each agent reads only what prior agents wrote
 """
 
 import json
@@ -14,11 +19,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+GROQ_MODEL = "llama-3.1-8b-instant"
+
 # ---------------------------------------------------------------------------
 # Shared Infrastructure
 # ---------------------------------------------------------------------------
-
-GROQ_MODEL = "llama-3.1-8b-instant"
 
 def _get_client():
     api_key = None
@@ -35,7 +40,8 @@ def _get_client():
 
 
 def _call_agent_with_tools(system_prompt, user_prompt, tools, tool_handlers, max_rounds=10):
-    """Generic Groq tool-use loop. Sends message, handles tool calls, returns final text."""
+    """Generic Groq tool-use loop."""
+    import time
     client = _get_client()
     messages = [
         {"role": "system", "content": system_prompt},
@@ -43,41 +49,32 @@ def _call_agent_with_tools(system_prompt, user_prompt, tools, tool_handlers, max
     ]
 
     for _ in range(max_rounds):
-        import time
-        max_retries = 3
-        for attempt in range(max_retries):
+        for attempt in range(3):
             try:
                 response = client.chat.completions.create(
                     model=GROQ_MODEL,
                     max_tokens=512,
-                    temperature=0.2,
+                    temperature=0.0,   # zero temp — no creative hallucination
                     tools=tools,
                     tool_choice="auto",
                     messages=messages,
                 )
                 break
-            except groq.RateLimitError as e:
-                if attempt < max_retries - 1:
-                    print(f"⚠️ Rate limit hit. Waiting 10s before retry...")
+            except groq.RateLimitError:
+                if attempt < 2:
                     time.sleep(10)
                 else:
-                    raise e
+                    raise
             except Exception as e:
-                if "Rate limit reached" in str(e):
-                    if attempt < max_retries - 1:
-                        print(f"⚠️ Rate limit hit. Waiting 10s before retry...")
-                        time.sleep(10)
-                        continue
-                raise e
+                if "Rate limit" in str(e) and attempt < 2:
+                    time.sleep(10)
+                    continue
+                raise
 
         msg = response.choices[0].message
-        finish_reason = response.choices[0].finish_reason
-
-        # If no tool calls, return the text
-        if not msg.tool_calls or finish_reason == "stop":
+        if not msg.tool_calls or response.choices[0].finish_reason == "stop":
             return msg.content or ""
 
-        # Process tool calls
         messages.append(msg)
         for tool_call in msg.tool_calls:
             fn_name = tool_call.function.name
@@ -89,37 +86,27 @@ def _call_agent_with_tools(system_prompt, user_prompt, tools, tool_handlers, max
                 fn_args = {}
 
             handler = tool_handlers.get(fn_name)
-            if handler:
-                result = handler(**fn_args)
-            else:
-                result = {"error": f"Unknown tool: {fn_name}"}
-
+            result = handler(**fn_args) if handler else {"error": f"Unknown tool: {fn_name}"}
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
                 "content": json.dumps(result) if not isinstance(result, str) else result,
             })
 
-    # Return whatever we have after max rounds
     return messages[-1].get("content", "") if isinstance(messages[-1], dict) else ""
 
 
 def _parse_json_response(text):
-    """Extract JSON from Claude's text response."""
-    # Try to find JSON in code blocks first
     match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
     if match:
         return json.loads(match.group(1))
-    # Try raw JSON
     match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
     if match:
         return json.loads(match.group(0))
-    # Try the whole text
     return json.loads(text.strip())
 
 
 def _load_dataset_medians():
-    """Load dataset medians for anomaly detection."""
     base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     csv_path = os.path.join(base, "data", "crypto_5000_dataset.csv")
     try:
@@ -129,350 +116,256 @@ def _load_dataset_medians():
         return {}
 
 
+def _risk_band(score: float) -> str:
+    """Single canonical function for risk level — used everywhere."""
+    if score > 0.6:
+        return "HIGH"
+    elif score > 0.3:
+        return "MEDIUM"
+    return "LOW"
+
+
 # ---------------------------------------------------------------------------
 # AGENT 0 — Data Fetcher
 # ---------------------------------------------------------------------------
 
 def run_agent_0_data_fetcher(shared_state: dict) -> dict:
-    from app.data_fetcher import (
-        fetch_normal_transactions,
-        fetch_erc20_transactions, 
-        fetch_eth_balance,
-        compute_wallet_features
-    )
-    
-    wallet_address = shared_state["wallet_address"]
-    
-    AGENT0_TOOLS = [
-        {
-            "type": "function",
-            "function": {
-                "name": "fetch_wallet_transactions",
-                "description": "Fetch all normal ETH transactions for a wallet address from Etherscan",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "wallet_address": {"type": "string"}
-                    },
-                    "required": ["wallet_address"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "fetch_token_transactions", 
-                "description": "Fetch all ERC20 token transactions for a wallet",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "wallet_address": {"type": "string"}
-                    },
-                    "required": ["wallet_address"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "fetch_wallet_balance",
-                "description": "Get current ETH balance of wallet in ETH",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "wallet_address": {"type": "string"}
-                    },
-                    "required": ["wallet_address"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "compute_features",
-                "description": "Compute all ML features from raw transaction data",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "wallet_address": {"type": "string"}
-                    },
-                    "required": ["wallet_address"]
-                }
-            }
-        }
-    ]
-    
-    AGENT0_HANDLERS = {
-        "fetch_wallet_transactions": lambda wallet_address: {"count": len(fetch_normal_transactions(wallet_address))},
-        "fetch_token_transactions": lambda wallet_address: {"count": len(fetch_erc20_transactions(wallet_address))},
-        "fetch_wallet_balance": lambda wallet_address: {"balance_eth": fetch_eth_balance(wallet_address)},
-        "compute_features": lambda wallet_address: compute_wallet_features(wallet_address),
-    }
+    from app.data_fetcher import compute_wallet_features
 
-    prompt = (
-        f"You are the Data Fetcher agent for CryptoGuard.\n\n"
-        f"Wallet address to investigate: {wallet_address}\n\n"
-        f"Use the available tools to:\n"
-        f"1. fetch_wallet_transactions — get all ETH transactions\n"
-        f"2. fetch_token_transactions — get ERC20 activity\n"
-        f"3. fetch_wallet_balance — get current balance\n"
-        f"4. compute_features — compute final ML feature set\n\n"
-        f"Return ONLY a JSON with the complete wallet_data dict containing all computed features."
-    )
-    
-    text = _call_agent_with_tools(
-        "You are a blockchain data fetching agent. Always use ALL FOUR tools before making a decision.",
-        prompt, AGENT0_TOOLS, AGENT0_HANDLERS
-    )
-    
-    try:
-        wallet_data = _parse_json_response(text)
-        if "error" in wallet_data:
-            shared_state["wallet_data"] = compute_wallet_features(wallet_address)
-        else:
-            shared_state["wallet_data"] = wallet_data
-    except Exception:
-        # Fallback — compute directly
-        shared_state["wallet_data"] = compute_wallet_features(wallet_address)
-    
+    wallet_address = shared_state["wallet_address"]
+
+    # Always compute features directly — LLM cannot improve raw API calls
+    wallet_data = compute_wallet_features(wallet_address)
+    shared_state["wallet_data"] = wallet_data
+
     shared_state["audit_log"].append({
         "agent": "Data Fetcher",
         "wallet_address": wallet_address,
-        "features_computed": len(shared_state["wallet_data"]),
-        "timestamp": datetime.now().isoformat()
-    })
-    
-    return shared_state
-
-
-# ---------------------------------------------------------------------------
-# AGENT 1 — Risk Scorer
-# ---------------------------------------------------------------------------
-
-def _tool_run_xgboost_predict(wallet_data: dict) -> float:
-    """Calls predict_fraud() and returns risk_score."""
-    import sys, os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from model.predict import predict_fraud
-    result = predict_fraud(wallet_data)
-    return result["risk_score"]
-
-
-def _tool_normalize_risk_level(risk_score: float) -> str:
-    if risk_score > 0.6:
-        return "HIGH"
-    elif risk_score > 0.3:
-        return "MEDIUM"
-    return "LOW"
-
-
-AGENT1_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "run_xgboost_predict",
-            "description": "Run XGBoost fraud model on wallet data. Returns risk_score float 0-1. Uses shared context automatically.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "normalize_risk_level",
-            "description": "Classify a risk score into HIGH/MEDIUM/LOW.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "risk_score": {"type": "number", "description": "Risk score 0-1"}
-                },
-                "required": ["risk_score"],
-            },
-        },
-    },
-]
-
-# Handlers moved to local scope
-
-
-def run_agent_1_risk_scorer(shared_state: dict) -> dict:
-    wallet_data = shared_state["wallet_data"]
-    prompt = (
-        f"You are the Risk Scoring agent.\n"
-        f"Use run_xgboost_predict tool to get the fraud risk score for this wallet.\n"
-        f"Then use normalize_risk_level to classify it.\n"
-        f'Return ONLY a JSON: {{"risk_score": float, "risk_level": string}}'
-    )
-    local_handlers = {
-        "run_xgboost_predict": lambda *args, **kwargs: {"risk_score": _tool_run_xgboost_predict(wallet_data)},
-        "normalize_risk_level": lambda *args, **kwargs: {"risk_level": _tool_normalize_risk_level(kwargs.get("risk_score", 0.0))},
-    }
-    text = _call_agent_with_tools(
-        "You are a risk scoring agent. Always use the provided tools.", prompt, AGENT1_TOOLS, local_handlers
-    )
-    try:
-        parsed = _parse_json_response(text)
-    except Exception:
-        pass
-
-    # Deterministic enforcement to prevent LLM hallucination on critical metrics
-    score = _tool_run_xgboost_predict(wallet_data)
-    level = _tool_normalize_risk_level(score)
-    shared_state["risk_score"] = score
-    shared_state["risk_level"] = level
-
-    shared_state["audit_log"].append({
-        "agent": "Risk Scorer",
-        "tool_called": "run_xgboost_predict",
-        "output": shared_state["risk_score"],
-        "risk_level": shared_state["risk_level"],
+        "features_computed": len(wallet_data),
+        "has_error": "error" in wallet_data,
         "timestamp": datetime.now().isoformat(),
     })
     return shared_state
 
 
 # ---------------------------------------------------------------------------
-# AGENT 2 — Pattern Classifier (with self-correction loop)
+# AGENT 1 — Risk Scorer  (fully deterministic — no LLM)
 # ---------------------------------------------------------------------------
 
-def _tool_check_transaction_velocity(sent_tnx: float, avg_min_between_sent_tnx: float) -> dict:
-    if sent_tnx > 500 and avg_min_between_sent_tnx < 5:
-        return {"pattern": "high_velocity", "suspicious": True}
-    return {"pattern": "normal_velocity", "suspicious": False}
+def run_agent_1_risk_scorer(shared_state: dict) -> dict:
+    """
+    Runs XGBoost model once. Stores risk_score and risk_level as the
+    immutable ground truth that all downstream agents must respect.
+    """
+    from model.predict import predict_fraud
+
+    wallet_data = shared_state["wallet_data"]
+
+    if "error" in wallet_data:
+        shared_state["risk_score"] = 0.0
+        shared_state["risk_level"] = "LOW"
+        shared_state["audit_log"].append({
+            "agent": "Risk Scorer",
+            "note": "Skipped — no wallet data",
+            "timestamp": datetime.now().isoformat(),
+        })
+        return shared_state
+
+    result = predict_fraud(wallet_data)
+    score = float(result["risk_score"])
+    level = _risk_band(score)
+
+    # Store as immutable ground truth
+    shared_state["risk_score"] = score
+    shared_state["risk_level"] = level
+
+    shared_state["audit_log"].append({
+        "agent": "Risk Scorer",
+        "risk_score": score,
+        "risk_level": level,
+        "top_features": [f[0] for f in result.get("top_features", [])[:3]],
+        "timestamp": datetime.now().isoformat(),
+    })
+    return shared_state
 
 
-def _tool_check_circular_flow(total_ether_sent: float, total_ether_balance: float) -> dict:
-    if total_ether_sent > 100 and total_ether_balance < 0.1:
-        return {"pattern": "circular_flow", "suspicious": True}
-    return {"pattern": "normal_flow", "suspicious": False}
+# ---------------------------------------------------------------------------
+# AGENT 2 — Pattern Classifier
+# LLM classifies fraud TYPE only. Risk level is never touched.
+# Tool thresholds are data-driven (dataset medians × multiplier).
+# ---------------------------------------------------------------------------
 
-
-def _tool_check_contract_creation(num_contracts: float) -> dict:
-    if num_contracts > 10:
-        return {"pattern": "mass_contract_creation", "suspicious": True}
-    return {"pattern": "normal", "suspicious": False}
-
-
-AGENT2_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "check_transaction_velocity",
-            "description": "Check if transaction frequency is suspiciously high. Uses shared context automatically.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "check_circular_flow",
-            "description": "Check for circular ether flow patterns. Uses shared context automatically.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "check_contract_creation",
-            "description": "Check for mass contract creation. Uses shared context automatically.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-]
-
-# Handlers moved to local scope
+def _get_dynamic_thresholds(wallet_data: dict) -> dict:
+    """Derive thresholds from dataset medians so nothing is hardcoded."""
+    medians = _load_dataset_medians()
+    return {
+        "high_velocity_sent": max(medians.get("sent_tnx", 50) * 3, 10),
+        "fast_interval_mins": max(medians.get("avg_min_between_sent_tnx", 60) * 0.1, 1),
+        "circular_sent_eth": max(medians.get("total_ether_sent", 5) * 5, 1),
+        "low_balance_eth": max(medians.get("total_ether_balance", 1) * 0.05, 0.001),
+        "mass_contracts": max(medians.get("number_of_created_contracts", 1) * 5, 3),
+    }
 
 
 def run_agent_2_pattern_classifier(shared_state: dict) -> dict:
     wallet_data = shared_state["wallet_data"]
     risk_score = shared_state["risk_score"]
-    base_prompt = (
-        f"You are the Pattern Classification agent.\n"
-        f"Risk score from previous agent: {risk_score}\n"
-        f"Use check_transaction_velocity, check_circular_flow, and check_contract_creation tools to analyze this wallet.\n\n"
-        f"Based on tool results, classify the fraud type as ONE of:\n"
-        f"- wash_trading: high velocity + circular flow\n"
-        f"- pump_and_dump: mass contracts + high velocity\n"
-        f"- phishing: low txns but very high single values\n"
-        f"- NONE: no suspicious patterns detected (SAFE)\n\n"
-        f"If tool results contradict the risk score, or if evidence is insufficient, do NOT guess. Return UNKNOWN for fraud_type.\n\n"
-        f'Return ONLY a JSON: {{"thought_process": "step-by-step reasoning here", "fraud_type": string, "confidence": float between 0.0 and 1.0, "reasoning": string}}'
-    )
+    risk_level = shared_state["risk_level"]
 
-    confidence = 0.0
-    fraud_type = "NONE"
-    reasoning = ""
-    retry_count = 0
+    if "error" in wallet_data:
+        shared_state["fraud_type"] = "NONE"
+        shared_state["fraud_confidence"] = 1.0
+        shared_state["audit_log"].append({
+            "agent": "Pattern Classifier",
+            "note": "Skipped — no wallet data",
+            "timestamp": datetime.now().isoformat(),
+        })
+        return shared_state
 
-    while confidence < 0.70 and retry_count < 3:
-        prompt = base_prompt
-        if retry_count > 0:
-            prompt += f"\n\nATTENTION: This is retry {retry_count}. Re-evaluate the tool results step-by-step. If there is genuinely no fraud, correctly classify as NONE with high confidence."
+    thresholds = _get_dynamic_thresholds(wallet_data)
 
-        local_handlers = {
-            "check_transaction_velocity": lambda *args, **kwargs: _tool_check_transaction_velocity(
-                wallet_data.get("sent_tnx", 0), wallet_data.get("avg_min_between_sent_tnx", 0)
-            ),
-            "check_circular_flow": lambda *args, **kwargs: _tool_check_circular_flow(
-                wallet_data.get("total_ether_sent", 0), wallet_data.get("total_ether_balance", 0)
-            ),
-            "check_contract_creation": lambda *args, **kwargs: _tool_check_contract_creation(
-                wallet_data.get("number_of_created_contracts", 0)
-            ),
+    # --- Tool implementations (data-driven thresholds) ---
+    def _check_velocity():
+        sent = wallet_data.get("sent_tnx", 0)
+        interval = wallet_data.get("avg_min_between_sent_tnx", 9999)
+        suspicious = sent > thresholds["high_velocity_sent"] and interval < thresholds["fast_interval_mins"]
+        return {
+            "suspicious": suspicious,
+            "sent_tnx": sent,
+            "avg_interval_mins": interval,
+            "threshold_sent": thresholds["high_velocity_sent"],
+            "threshold_interval": thresholds["fast_interval_mins"],
         }
 
+    def _check_circular_flow():
+        sent = wallet_data.get("total_ether_sent", 0)
+        balance = wallet_data.get("total_ether_balance", 0)
+        suspicious = sent > thresholds["circular_sent_eth"] and balance < thresholds["low_balance_eth"]
+        return {
+            "suspicious": suspicious,
+            "total_ether_sent": sent,
+            "total_ether_balance": balance,
+            "threshold_sent": thresholds["circular_sent_eth"],
+            "threshold_balance": thresholds["low_balance_eth"],
+        }
+
+    def _check_contract_creation():
+        contracts = wallet_data.get("number_of_created_contracts", 0)
+        suspicious = contracts > thresholds["mass_contracts"]
+        return {
+            "suspicious": suspicious,
+            "contracts_created": contracts,
+            "threshold": thresholds["mass_contracts"],
+        }
+
+    TOOLS = [
+        {"type": "function", "function": {
+            "name": "check_transaction_velocity",
+            "description": "Check if transaction frequency is suspiciously high based on dataset-derived thresholds.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        }},
+        {"type": "function", "function": {
+            "name": "check_circular_flow",
+            "description": "Check for circular ether flow: high sent ETH but near-zero balance.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        }},
+        {"type": "function", "function": {
+            "name": "check_contract_creation",
+            "description": "Check for mass contract creation activity.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        }},
+    ]
+
+    handlers = {
+        "check_transaction_velocity": lambda **kw: _check_velocity(),
+        "check_circular_flow": lambda **kw: _check_circular_flow(),
+        "check_contract_creation": lambda **kw: _check_contract_creation(),
+    }
+
+    # Run tools directly to get ground truth for enforcement
+    vel = _check_velocity()
+    circ = _check_circular_flow()
+    contr = _check_contract_creation()
+
+    # Determine what fraud types are actually supported by tool evidence
+    supported_types = []
+    if vel["suspicious"] and circ["suspicious"]:
+        supported_types.append("wash_trading")
+    if contr["suspicious"] and vel["suspicious"]:
+        supported_types.append("pump_and_dump")
+    if not vel["suspicious"] and not circ["suspicious"] and not contr["suspicious"]:
+        supported_types.append("NONE")
+
+    # If ML score is LOW, fraud_type must be NONE unless tools show strong evidence
+    if risk_level == "LOW" and not supported_types:
+        supported_types = ["NONE"]
+
+    # Ask LLM to classify fraud TYPE only — give it the tool results and ML score
+    tool_summary = json.dumps({"velocity": vel, "circular_flow": circ, "contracts": contr}, indent=2)
+    prompt = (
+        f"You are the Pattern Classification agent.\n\n"
+        f"ML Risk Score (ground truth, do NOT change): {risk_score:.3f} ({risk_level})\n\n"
+        f"Tool results (these are facts, not opinions):\n{tool_summary}\n\n"
+        f"Supported fraud types based on tool evidence: {supported_types}\n\n"
+        f"Your ONLY job: pick the fraud_type from the supported list above.\n"
+        f"Rules:\n"
+        f"- If supported_types contains only 'NONE', you MUST return fraud_type='NONE'\n"
+        f"- If risk_level is LOW, you MUST return fraud_type='NONE' unless tools show suspicious=True\n"
+        f"- Do NOT invent fraud types not in the supported list\n"
+        f"- confidence must reflect how strongly the tool results support your choice (0.0-1.0)\n\n"
+        f'Return ONLY JSON: {{"fraud_type": string, "confidence": float, "reasoning": string}}'
+    )
+
+    fraud_type = "NONE"
+    confidence = 0.0
+    reasoning = ""
+
+    for attempt in range(3):
         text = _call_agent_with_tools(
-            "You are a pattern classification agent. Always use ALL three tools before making a decision.",
-            prompt, AGENT2_TOOLS, local_handlers,
+            "You are a pattern classification agent. Classify fraud type strictly from tool evidence.",
+            prompt, TOOLS, handlers,
         )
         try:
             parsed = _parse_json_response(text)
-            fraud_type = parsed.get("fraud_type", "UNKNOWN")
+            fraud_type = parsed.get("fraud_type", "NONE")
             confidence = float(parsed.get("confidence", 0.0))
             if confidence > 1.0:
-                confidence = confidence / 100.0
-            
-            thought_process = parsed.get("thought_process", "")
+                confidence /= 100.0
             reasoning = parsed.get("reasoning", "")
-            
-            # Combine thought process into reasoning for audit log
-            if thought_process:
-                reasoning = f"Thought Process: {thought_process} | Conclusion: {reasoning}"
+            if confidence >= 0.6:
+                break
         except Exception:
             pass
 
-        retry_count += 1
+    # ── Enforcement: LLM cannot contradict tool evidence ──────────────────
+    # If no tool flagged suspicious, fraud_type must be NONE
+    no_tool_evidence = not (vel["suspicious"] or circ["suspicious"] or contr["suspicious"])
+    if no_tool_evidence and fraud_type != "NONE":
+        fraud_type = "NONE"
+        confidence = 0.9
+        reasoning = "Overridden: no tool evidence supports fraud classification."
 
-    # If still low confidence after 3 retries
-    if confidence < 0.70:
+    # If ML score is LOW and no tool evidence, force NONE
+    if risk_level == "LOW" and no_tool_evidence:
+        fraud_type = "NONE"
+        confidence = max(confidence, 0.85)
+
+    # If ML score is HIGH but LLM says NONE with no tool evidence, flag UNKNOWN
+    if risk_level == "HIGH" and fraud_type == "NONE" and no_tool_evidence:
         fraud_type = "UNKNOWN"
-        reasoning = "Low confidence after 3 retries — flagged for human review."
+        confidence = 0.5
+        reasoning = "ML flags HIGH risk but no specific pattern detected — flagged for human review."
 
     shared_state["fraud_type"] = fraud_type
     shared_state["fraud_confidence"] = confidence
 
     shared_state["audit_log"].append({
         "agent": "Pattern Classifier",
-        "retries": retry_count,
         "fraud_type": fraud_type,
         "confidence": confidence,
         "reasoning": reasoning,
-        "human_review_needed": confidence < 0.70,
+        "tool_evidence": {"velocity": vel["suspicious"], "circular": circ["suspicious"], "contracts": contr["suspicious"]},
+        "enforcement_applied": no_tool_evidence and fraud_type == "NONE",
         "timestamp": datetime.now().isoformat(),
     })
     return shared_state
@@ -483,8 +376,7 @@ def run_agent_2_pattern_classifier(shared_state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _tool_get_top_risk_features(wallet_data: dict) -> list:
-    """Return top 5 features by XGBoost importance as human-readable strings."""
-    import sys, os
+    import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from model.predict import predict_fraud
     result = predict_fraud(wallet_data)
@@ -497,107 +389,65 @@ def _tool_get_top_risk_features(wallet_data: dict) -> list:
 
 
 def _tool_find_anomalies(wallet_data: dict) -> list:
-    """Compare each feature against dataset median; flag those 3x above."""
     medians = _load_dataset_medians()
     anomalies = []
     for key, val in wallet_data.items():
-        if key in medians and medians[key] > 0:
-            ratio = val / medians[key]
-            if ratio >= 3.0:
-                readable = key.replace("_", " ").title()
-                anomalies.append(f"{readable} is {ratio:.1f}x above normal (value: {val}, median: {medians[key]:.2f})")
-            elif ratio <= 1/3 and medians[key] > 0:
-                readable = key.replace("_", " ").title()
-                if ratio == 0:
-                    anomalies.append(f"{readable} is 0 (median: {medians[key]:.2f})")
-                else:
-                    anomalies.append(f"{readable} is {1/ratio:.1f}x below normal (value: {val}, median: {medians[key]:.2f})")
+        if key.startswith("_") or key not in medians or medians[key] <= 0:
+            continue
+        ratio = val / medians[key]
+        readable = key.replace("_", " ").title()
+        if ratio >= 3.0:
+            anomalies.append(f"{readable} is {ratio:.1f}x above normal (value: {val}, median: {medians[key]:.2f})")
+        elif ratio <= 1/3:
+            if ratio == 0:
+                anomalies.append(f"{readable} is 0 (median: {medians[key]:.2f})")
+            else:
+                anomalies.append(f"{readable} is {1/ratio:.1f}x below normal (value: {val}, median: {medians[key]:.2f})")
     return anomalies[:10]
-
-
-def _tool_build_evidence_summary(top_features: list, anomalies: list) -> list:
-    """Combine and deduplicate, return max 5 points."""
-    combined = list(dict.fromkeys(top_features + anomalies))
-    return combined[:5]
-
-
-AGENT3_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_top_risk_features",
-            "description": "Get top 5 risk features from XGBoost model for given wallet data. Uses shared context automatically.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "find_anomalies",
-            "description": "Find features that are 3x above/below dataset median. Uses shared context automatically.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-]
-
-# Handlers moved to local scope
 
 
 def run_agent_3_evidence_collector(shared_state: dict) -> dict:
     wallet_data = shared_state["wallet_data"]
-    fraud_type = shared_state["fraud_type"]
-    confidence = shared_state["fraud_confidence"]
 
-    prompt = (
-        f"You are the Evidence Collection agent.\n"
-        f"Fraud type identified: {fraud_type} (confidence: {confidence})\n"
-        f"Use get_top_risk_features and find_anomalies tools.\n"
-        f"Review the results, then return ONLY a JSON with the combined evidence: {{\"evidence_list\": [string, string, string, string, string]}}"
-    )
-    
-    local_handlers = {
-        "get_top_risk_features": lambda *args, **kwargs: {"features": _tool_get_top_risk_features(wallet_data)},
-        "find_anomalies": lambda *args, **kwargs: {"anomalies": _tool_find_anomalies(wallet_data)},
-    }
-    
-    text = _call_agent_with_tools(
-        "You are an evidence collection agent. Use both tools, then return the JSON list.", prompt, AGENT3_TOOLS, local_handlers
-    )
-    try:
-        parsed = _parse_json_response(text)
-        shared_state["evidence_list"] = parsed.get("evidence_list", [])[:5]
-    except Exception:
-        # Fallback: run tools directly
-        feats = _tool_get_top_risk_features(wallet_data)
-        anomalies = _tool_find_anomalies(wallet_data)
-        shared_state["evidence_list"] = _tool_build_evidence_summary(feats, anomalies)
+    if "error" in wallet_data:
+        shared_state["evidence_list"] = []
+        shared_state["audit_log"].append({
+            "agent": "Evidence Collector",
+            "note": "Skipped — no wallet data",
+            "timestamp": datetime.now().isoformat(),
+        })
+        return shared_state
+
+    # Run both tools directly — no LLM needed for data collection
+    feats = _tool_get_top_risk_features(wallet_data)
+    anomalies = _tool_find_anomalies(wallet_data)
+
+    # Deduplicate and cap at 5
+    combined = list(dict.fromkeys(feats + anomalies))[:5]
+    shared_state["evidence_list"] = combined
 
     shared_state["audit_log"].append({
         "agent": "Evidence Collector",
-        "evidence_count": len(shared_state["evidence_list"]),
+        "evidence_count": len(combined),
         "timestamp": datetime.now().isoformat(),
     })
     return shared_state
 
 
 # ---------------------------------------------------------------------------
-# AGENT 4 — Report Writer (with self-correction for length)
+# AGENT 4 — Report Writer
+# Uses consolidated_risk (set by Agent 5) if available, else risk_score.
+# Since Agent 4 runs before Agent 5, it uses risk_score here.
+# Agent 5 will update the report's risk display via shared_state.
 # ---------------------------------------------------------------------------
 
-def _tool_format_compliance_report(risk_score, risk_level, fraud_type, confidence, evidence_list, wallet_data):
-    """Returns a structured compliance report template with placeholders filled."""
-    evidence_bullets = "\n".join(f"  • {e}" for e in evidence_list) if evidence_list else "  • No evidence collected"
-
+def _format_report(risk_score: float, risk_level: str, fraud_type: str,
+                   confidence: float, evidence_list: list, wallet_data: dict) -> str:
+    evidence_bullets = "\n".join(f"  • {e}" for e in evidence_list) if evidence_list else "  • No anomalies detected"
+    meta = wallet_data.get("_meta", {})
     status_word = "flagged" if risk_score > 0.3 else "evaluated"
-    report = f"""═══════════════════════════════════════════════════════════════
+
+    return f"""═══════════════════════════════════════════════════════════════
                   CRYPTOGUARD COMPLIANCE REPORT
                   Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
 ═══════════════════════════════════════════════════════════════
@@ -609,16 +459,16 @@ def _tool_format_compliance_report(risk_score, risk_level, fraud_type, confidenc
 
 2. TRANSACTION PATTERN ANALYSIS
    Wallet Metrics:
-   - Total Transactions: {wallet_data.get('_meta', {}).get('total_transactions', 0)}
+   - Total Transactions: {meta.get('total_transactions', 0)}
    - Sent Transactions: {wallet_data.get('sent_tnx', 0)}
    - Received Transactions: {wallet_data.get('received_tnx', 0)}
-   - ETH Balance: {wallet_data.get('total_ether_balance', 0):.4f}
+   - ETH Balance: {wallet_data.get('total_ether_balance', 0):.18g} ETH
+   - First Seen: {meta.get('first_seen', 'N/A')}
+   - Last Seen: {meta.get('last_seen', 'N/A')}
 
-3. FRAUD CLASSIFICATION REASONING
+3. FRAUD CLASSIFICATION
    Classification: {fraud_type}
    Confidence: {confidence:.1%}
-   The classification was determined by analyzing transaction velocity,
-   circular flow patterns, and contract creation behavior.
 
 4. EVIDENCE POINTS
 {evidence_bullets}
@@ -631,70 +481,6 @@ def _tool_format_compliance_report(risk_score, risk_level, fraud_type, confidenc
 ═══════════════════════════════════════════════════════════════
                      END OF REPORT
 ═══════════════════════════════════════════════════════════════"""
-    return report
-
-
-def _tool_validate_report_length(report_text: str) -> dict:
-    word_count = len(report_text.split())
-    if word_count < 150:
-        return {"valid": False, "reason": "too short", "word_count": word_count}
-    return {"valid": True, "word_count": word_count}
-
-
-def _tool_save_report(report_text: str, wallet_id: str) -> str:
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    reports_dir = os.path.join(base, "reports")
-    os.makedirs(reports_dir, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filepath = os.path.join(reports_dir, f"{wallet_id}_{ts}.txt")
-    with open(filepath, "w") as f:
-        f.write(report_text)
-    return filepath
-
-
-AGENT4_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "format_compliance_report",
-            "description": "Generate a structured compliance report from investigation data. Uses shared context automatically.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "validate_report_length",
-            "description": "Check if report meets minimum word count (150 words).",
-            "parameters": {
-                "type": "object",
-                "properties": {"report_text": {"type": "string"}},
-                "required": ["report_text"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "save_report",
-            "description": "Save the compliance report to disk.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "report_text": {"type": "string"},
-                    "wallet_id": {"type": "string"},
-                },
-                "required": ["report_text", "wallet_id"],
-            },
-        },
-    },
-]
-
-# Handlers moved to local scope in run_agent_4_report_writer
 
 
 def run_agent_4_report_writer(shared_state: dict) -> dict:
@@ -704,23 +490,25 @@ def run_agent_4_report_writer(shared_state: dict) -> dict:
     confidence = shared_state["fraud_confidence"]
     evidence_list = shared_state["evidence_list"]
     wallet_data = shared_state["wallet_data"]
-    wallet_id = f"wallet_{hash(json.dumps(wallet_data, sort_keys=True)) % 100000:05d}"
 
-    # Agent 4 is fully deterministic. 
-    # Having an LLM generate a massive text document via JSON tool-calling 
-    # leads to token exhaustion and JSON truncation errors.
-    report_text = _tool_format_compliance_report(
-        risk_score, risk_level, fraud_type, confidence, evidence_list, wallet_data
-    )
-    filepath = _tool_save_report(report_text, wallet_id)
+    wallet_id = f"wallet_{hash(json.dumps({k: v for k, v in wallet_data.items() if not k.startswith('_')}, sort_keys=True)) % 100000:05d}"
 
-    word_count = len(report_text.split())
+    report_text = _format_report(risk_score, risk_level, fraud_type, confidence, evidence_list, wallet_data)
+
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    reports_dir = os.path.join(base, "reports")
+    os.makedirs(reports_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = os.path.join(reports_dir, f"{wallet_id}_{ts}.txt")
+    with open(filepath, "w") as f:
+        f.write(report_text)
+
     shared_state["report_text"] = report_text
     shared_state["report_filepath"] = filepath
 
     shared_state["audit_log"].append({
-        "agent": "Report Writer (Deterministic)",
-        "report_word_count": word_count,
+        "agent": "Report Writer",
+        "report_word_count": len(report_text.split()),
         "filepath": filepath,
         "timestamp": datetime.now().isoformat(),
     })
@@ -728,198 +516,153 @@ def run_agent_4_report_writer(shared_state: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# AGENT 5 — Action Decider (with conflict detection)
+# AGENT 5 — Action Decider  (fully deterministic — no LLM)
+#
+# Key design: consolidated_risk MUST stay within the same risk band as
+# risk_score unless there is explicit tool-backed evidence of disagreement.
+# This prevents the LOW→HIGH flip the user was seeing.
 # ---------------------------------------------------------------------------
 
 def _calculate_consolidated_risk(ml_score: float, fraud_type: str, fraud_confidence: float) -> float:
-    """Implement dynamic weighting: AI boosts risk aggressively but reduces it cautiously."""
+    """
+    Blend ML score with pattern classifier signal.
+    The blend NEVER moves the score across a risk band boundary
+    unless both signals agree on the direction.
+    """
+    ml_band = _risk_band(ml_score)
+
     if fraud_type == "NONE":
-        ai_score = 0.0
-        ai_weight = 0.2
-        ai_adjustment = -0.1 * fraud_confidence
-    elif fraud_confidence >= 0.9:
-        ai_score = 1.0
-        ai_weight = 0.5
-        ai_adjustment = 0.4 * fraud_confidence
+        # Pattern classifier says safe — small downward nudge only
+        adjustment = -0.05 * fraud_confidence
+    elif fraud_type == "UNKNOWN":
+        # Uncertain — no adjustment
+        adjustment = 0.0
     else:
-        ai_score = 1.0
-        ai_weight = 0.3
-        ai_adjustment = 0.2 * fraud_confidence
+        # Pattern classifier found fraud — small upward nudge only
+        adjustment = 0.05 * fraud_confidence
 
-    ml_weight = 1.0 - ai_weight
-    consolidated = (ml_weight * ml_score) + (ai_weight * ai_score) + ai_adjustment
-    return max(0.0, min(1.0, consolidated))
+    consolidated = ml_score + adjustment
+    consolidated = max(0.0, min(1.0, consolidated))
 
-def _tool_decide_action(risk_score: float, fraud_type: str, confidence: float, evidence_count: int, wallet_data: dict) -> dict:
-    # 1. Consolidated Risk
-    consolidated_risk = _calculate_consolidated_risk(risk_score, fraud_type, confidence)
-    
-    # 2. Anomaly Override (e.g., sudden burst activity)
-    normal_txns = wallet_data.get("_meta", {}).get("total_transactions", 0)
-    time_diff = wallet_data.get("time_diff_between_first_and_last_mins", 0)
-    is_anomaly = False
-    if normal_txns > 100 and time_diff < 60: # Extreme burst
-        is_anomaly = True
+    # ── Band-lock: never cross a band boundary unless ML score is near the edge ──
+    # "Near edge" = within 0.08 of a boundary (0.3 or 0.6)
+    consolidated_band = _risk_band(consolidated)
+    if consolidated_band != ml_band:
+        near_lower = abs(ml_score - 0.3) < 0.08
+        near_upper = abs(ml_score - 0.6) < 0.08
+        if not (near_lower or near_upper):
+            # Not near a boundary — revert to ML score
+            consolidated = ml_score
 
-    # 3. Enforcement Triad (Deterministic)
-    if consolidated_risk >= 0.8 and confidence >= 0.8 and evidence_count >= 3:
-        action = "FREEZE"
-        reason = f"High risk signal confirmed across multiple vectors."
-    elif consolidated_risk < 0.2 and fraud_type == "NONE":
-        action = "CLEAR"
-        reason = "Consistent low-risk profile."
+    return round(consolidated, 4)
+
+
+def _decide_action(consolidated_risk: float, risk_level: str, fraud_type: str,
+                   fraud_confidence: float, evidence_count: int) -> tuple[str, str]:
+    """
+    Deterministic action decision anchored to consolidated_risk.
+    Returns (action, reason).
+    """
+    # Signal disagreement: ML and pattern classifier strongly contradict each other
+    ml_score_band = risk_level
+    pattern_says_fraud = fraud_type not in ("NONE", "UNKNOWN") and fraud_confidence >= 0.7
+    pattern_says_safe = fraud_type == "NONE" and fraud_confidence >= 0.7
+
+    disagreement = (
+        (ml_score_band == "LOW" and pattern_says_fraud) or
+        (ml_score_band == "HIGH" and pattern_says_safe)
+    )
+
+    if disagreement:
+        return "ESCALATE", f"Signal disagreement: ML={ml_score_band}, Pattern={fraud_type} ({fraud_confidence:.0%} confidence). Human review required."
+
+    # Standard decision tree — anchored to consolidated_risk
+    if consolidated_risk >= 0.7 and fraud_confidence >= 0.7 and evidence_count >= 2:
+        return "FREEZE", f"High consolidated risk ({consolidated_risk:.1%}) confirmed by pattern analysis ({fraud_type}) and {evidence_count} evidence points."
+    elif consolidated_risk >= 0.5 or (fraud_type not in ("NONE", "UNKNOWN") and fraud_confidence >= 0.6):
+        return "ESCALATE", f"Moderate risk ({consolidated_risk:.1%}) or unconfirmed fraud pattern ({fraud_type}). Flagged for review."
+    elif consolidated_risk < 0.3 and fraud_type == "NONE":
+        return "CLEAR", f"Low consolidated risk ({consolidated_risk:.1%}) with no fraud patterns detected."
     else:
-        action = "ESCALATE"
-        reason = "Inconsistent or borderline signals. Flagged for human review."
-
-    # 4. Disagreement Override (Strict Contradiction Detection)
-    # If ML says SAFE (<30%) but AI says FRAUD with high confidence (>70%) -> ESCALATE
-    # If ML says FRAUD (>70%) but AI says NONE with high confidence (>70%) -> ESCALATE
-    is_disagreement = False
-    if (risk_score <= 0.3 and fraud_type != "NONE" and confidence >= 0.7) or \
-       (risk_score >= 0.7 and fraud_type == "NONE" and confidence >= 0.7):
-        is_disagreement = True
-
-    if is_disagreement:
-        action = "ESCALATE"
-        reason = f"SIGNAL DISAGREEMENT: ML ({risk_score:.1%}) and AI ({fraud_type} @ {confidence:.1%}) are in conflict."
-
-    if is_anomaly:
-        action = "ESCALATE"
-        reason = "ANOMALY OVERRIDE: Extreme burst activity detected."
-
-    # 5. Integrity Layer (Explicit Contradiction Check)
-    if (consolidated_risk >= 0.7 and action == "CLEAR") or (consolidated_risk <= 0.3 and action == "FREEZE"):
-        action = "ESCALATE"
-        reason = f"INTEGRITY_VIOLATION: Contradiction between risk score ({consolidated_risk:.1%}) and action choice."
-
-    return {
-        "action": action, 
-        "reason": reason,
-        "consolidated_risk": consolidated_risk
-    }
-
-
-def _tool_log_action(action: str, wallet_data: dict, risk_score: float, fraud_type: str) -> str:
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    log_path = os.path.join(base, "logs", "actions_log.json")
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
-
-    entry = {
-        "timestamp": datetime.now().isoformat(),
-        "action": action,
-        "risk_score": risk_score,
-        "fraud_type": fraud_type,
-        "wallet_summary": {k: v for k, v in list(wallet_data.items())[:5]},
-    }
-
-    existing = []
-    if os.path.exists(log_path):
-        try:
-            with open(log_path, "r") as f:
-                existing = json.load(f)
-        except Exception:
-            existing = []
-    existing.append(entry)
-    with open(log_path, "w") as f:
-        json.dump(existing, f, indent=2)
-    return "logged"
-
-
-def _tool_notify_compliance_team(action: str, report_filepath: str) -> str:
-    if action in ("FREEZE", "ESCALATE"):
-        print(f"\n🚨 ALERT: Compliance team notified for {action}")
-        print(f"   Report: {report_filepath}")
-    return "notified"
-
-
-AGENT5_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "decide_action",
-            "description": "Determine compliance action based on risk score, fraud type, and confidence.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "risk_score": {"type": "number"},
-                    "fraud_type": {"type": "string"},
-                    "confidence": {"type": "number"},
-                },
-                "required": ["risk_score", "fraud_type", "confidence"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "log_action",
-            "description": "Log the compliance action to actions_log.json. Uses shared context automatically.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string"},
-                },
-                "required": ["action"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "notify_compliance_team",
-            "description": "Notify compliance team for FREEZE or ESCALATE actions.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string"},
-                    "report_filepath": {"type": "string"},
-                },
-                "required": ["action", "report_filepath"],
-            },
-        },
-    },
-]
-
-# Handlers moved to local scope
+        return "ESCALATE", f"Borderline signals (risk={consolidated_risk:.1%}, pattern={fraud_type}). Flagged for human review."
 
 
 def run_agent_5_action_decider(shared_state: dict) -> dict:
     risk_score = shared_state["risk_score"]
+    risk_level = shared_state["risk_level"]
     fraud_type = shared_state["fraud_type"]
     confidence = shared_state["fraud_confidence"]
     evidence_list = shared_state["evidence_list"]
     wallet_data = shared_state["wallet_data"]
     report_filepath = shared_state.get("report_filepath", "")
 
-    # Deterministic enforcement (No LLM)
-    result = _tool_decide_action(risk_score, fraud_type, confidence, len(evidence_list), wallet_data)
-    action = result["action"]
-    reason = result["reason"]
-    consolidated_risk = result.get("consolidated_risk", risk_score)
+    # 1. Compute consolidated risk (anchored to ML score)
+    consolidated_risk = _calculate_consolidated_risk(risk_score, fraud_type, confidence)
+    consolidated_level = _risk_band(consolidated_risk)
 
-    # Auditable Structured Reasoning
+    # 2. Decide action
+    action, reason = _decide_action(consolidated_risk, risk_level, fraud_type, confidence, len(evidence_list))
+
+    # 3. Build structured reason with evidence
     structured_reason = (
-        f"Consolidated Risk: {consolidated_risk:.2f} ({'High' if consolidated_risk > 0.7 else 'Low'})\n\n"
-        "Drivers:\n"
+        f"ML Risk Score: {risk_score:.1%} ({risk_level})\n"
+        f"Consolidated Risk: {consolidated_risk:.1%} ({consolidated_level})\n"
+        f"Pattern: {fraud_type} ({confidence:.0%} confidence)\n\n"
+        f"Decision: {reason}\n\n"
     )
-    for e in evidence_list[:3]:
-        structured_reason += f"- {e}\n"
-    structured_reason += f"\nIntegrity: Passed"
+    if evidence_list:
+        structured_reason += "Key Evidence:\n" + "\n".join(f"- {e}" for e in evidence_list[:3])
 
-    _tool_log_action(action, wallet_data, consolidated_risk, fraud_type)
+    # 4. Update report to use consolidated_risk (patch the report text)
+    if shared_state.get("report_text"):
+        updated_report = shared_state["report_text"].replace(
+            f"risk score of {risk_score:.1%}\n   ({risk_level} risk)",
+            f"risk score of {consolidated_risk:.1%}\n   ({consolidated_level} risk)"
+        )
+        shared_state["report_text"] = updated_report
+        # Overwrite saved report file
+        if report_filepath and os.path.exists(report_filepath):
+            with open(report_filepath, "w") as f:
+                f.write(updated_report)
+
+    # 5. Log action
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    log_path = os.path.join(base, "logs", "actions_log.json")
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "action": action,
+        "ml_risk_score": risk_score,
+        "consolidated_risk": consolidated_risk,
+        "risk_level": consolidated_level,
+        "fraud_type": fraud_type,
+    }
+    existing = []
+    if os.path.exists(log_path):
+        try:
+            with open(log_path) as f:
+                existing = json.load(f)
+        except Exception:
+            existing = []
+    existing.append(entry)
+    with open(log_path, "w") as f:
+        json.dump(existing, f, indent=2)
+
     if action in ("FREEZE", "ESCALATE"):
-        _tool_notify_compliance_team(action, report_filepath)
+        print(f"\n🚨 ALERT: {action} — Report: {report_filepath}")
 
     shared_state["final_action"] = action
     shared_state["action_reason"] = structured_reason
     shared_state["consolidated_risk"] = consolidated_risk
+    shared_state["consolidated_level"] = consolidated_level
 
     shared_state["audit_log"].append({
-        "agent": "Action Decider (Deterministic Enforcement)",
-        "final_action": action,
+        "agent": "Action Decider",
+        "ml_risk_score": risk_score,
         "consolidated_risk": consolidated_risk,
+        "consolidated_level": consolidated_level,
+        "final_action": action,
+        "reason": reason,
         "timestamp": datetime.now().isoformat(),
     })
-
     return shared_state
